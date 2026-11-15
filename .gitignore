@@ -1,0 +1,12 @@
+build/
+node_modules/
+.env
+*.log
+*.exe
+*.o
+*.a
+*.so
+.vscode/
+.idea/
+.env.*
+!.env.example

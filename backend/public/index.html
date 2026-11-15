@@ -1,0 +1,760 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SafeBox | Process analysis</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: system-ui, sans-serif;
+      font-size: 16px;
+      color: #1f2328;
+      background: #f5f7fa;
+      --blue: #1f6feb;
+      --green: #1a7f37;
+      --amber: #9a6700;
+      --red: #cf222e;
+      --border: #d8dee4;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 32px 16px; }
+    main { max-width: 800px; margin: 0 auto; }
+    .card {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin: 0 0 20px;
+      padding: 20px;
+    }
+    h1, h2, h3 { margin: 0 0 14px; }
+    h1 { font-size: 1.7rem; }
+    h2 { font-size: 1.25rem; }
+    h3 { font-size: 1rem; }
+    p { line-height: 1.5; }
+    .muted { color: #59636e; font-size: 0.9rem; }
+    label { display: block; font-weight: 600; margin: 16px 0; }
+    input[type="file"] { display: block; margin-top: 8px; max-width: 100%; }
+    button {
+      border: 0;
+      border-radius: 6px;
+      background: var(--blue);
+      color: white;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 650;
+      padding: 10px 16px;
+    }
+    button.secondary { background: #eaeef2; color: #24292f; }
+    button:disabled { cursor: wait; opacity: 0.65; }
+    .main-button { display: block; font-size: 1.08rem; padding: 13px 20px; width: 100%; }
+    .button-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+    .warning { margin-bottom: 0; }
+    .error {
+      border: 1px solid #ff8182;
+      border-radius: 6px;
+      background: #ffebe9;
+      color: #82071e;
+      margin: 0 0 20px;
+      padding: 12px 16px;
+      white-space: pre-wrap;
+    }
+    .status-line { align-items: center; display: flex; gap: 8px; margin-bottom: 14px; }
+    .badge { border-radius: 999px; background: #ddf4ff; color: #0550ae; font-weight: 700; padding: 4px 10px; }
+    .badge.finished { background: #dafbe1; color: var(--green); }
+    .table-wrap { overflow-x: auto; }
+    table { border-collapse: collapse; margin: 8px 0 16px; width: 100%; }
+    th, td { border-bottom: 1px solid var(--border); padding: 9px 10px; text-align: left; vertical-align: top; }
+    th { background: #f6f8fa; font-weight: 650; }
+    tbody tr:nth-child(even) { background: #f6f8fa; }
+    .state { align-items: center; display: inline-flex; gap: 7px; white-space: nowrap; }
+    .dot { background: #8c959f; border-radius: 50%; height: 9px; width: 9px; }
+    .dot.RUNNING { background: var(--green); }
+    .dot.READY { background: var(--blue); }
+    .dot.SUSPENDED { background: var(--amber); }
+    .dot.TERMINATED { background: #8c959f; }
+    .event-log {
+      background: #f6f8fa;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      height: 180px;
+      overflow: auto;
+      padding: 10px;
+    }
+    .event-log p { font-size: 0.85rem; margin: 0 0 6px; overflow-wrap: anywhere; }
+    .result-banner { border-left: 6px solid var(--green); }
+    .result-banner.LOW { border-color: var(--green); }
+    .result-banner.MEDIUM { border-color: var(--amber); }
+    .result-banner.HIGH { border-color: var(--red); }
+    .risk-score { font-size: 1.1rem; font-weight: 650; }
+    .tile-grid { display: grid; gap: 12px; grid-template-columns: repeat(4, 1fr); }
+    .tile { background: #f6f8fa; border-radius: 6px; padding: 14px; }
+    .tile strong { display: block; font-size: 1.25rem; margin-top: 6px; }
+    .section-title { margin-top: 8px; }
+    .slice-bar-track { background: #eaeef2; border-radius: 3px; height: 12px; min-width: 90px; }
+    .slice-bar { background: var(--blue); border-radius: 3px; height: 100%; min-width: 2px; }
+    .memory-chart { display: block; height: auto; max-width: 100%; width: 100%; }
+    .memory-grid { stroke: #d8dee4; stroke-width: 1; }
+    .memory-line { fill: none; stroke: var(--blue); stroke-linecap: round; stroke-linejoin: round; stroke-width: 3; }
+    .memory-axis-label { fill: #59636e; font-size: 12px; }
+    .db-note { color: #59636e; font-size: 0.85rem; }
+    .history-detail-heading { margin-top: 20px; }
+    .history-json { background: #f6f8fa; border-radius: 6px; overflow: auto; padding: 12px; }
+    [hidden] { display: none !important; }
+    @media (max-width: 600px) {
+      body { padding: 16px 10px; }
+      .card { padding: 15px; }
+      .tile-grid { grid-template-columns: repeat(2, 1fr); }
+      th, td { padding: 8px 6px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card" aria-labelledby="title">
+      <h1 id="title">SafeBox</h1>
+      <form id="analyze-form">
+        <label for="program-file">Program file</label>
+        <input id="program-file" name="file" type="file" required>
+        <div class="button-row">
+          <label>Quantum (ms)
+            <input name="quantum" type="number" min="50" max="1000" value="200">
+          </label>
+          <label>Timeout (seconds)
+            <input name="timeout" type="number" min="1" max="60" value="15">
+          </label>
+        </div>
+        <button id="run-button" class="main-button" type="submit">Run &amp; Analyze</button>
+      </form>
+      <p class="muted warning">This program runs directly on this machine. Upload only programs you trust.</p>
+    </section>
+
+    <section class="card" aria-labelledby="history-title">
+      <h2 id="history-title">Analysis history</h2>
+      <p id="history-status" class="muted" role="status" aria-live="polite">
+        Loading saved analyses...
+      </p>
+      <div id="history-table" class="table-wrap"></div>
+    </section>
+    <section id="history-detail" class="card" aria-labelledby="history-detail-title" hidden></section>
+
+    <div id="error-box" class="error" role="alert" hidden></div>
+
+    <section id="live-card" class="card" aria-labelledby="live-title" hidden>
+      <h2 id="live-title">Live analysis</h2>
+      <div class="status-line">
+        <span id="status-badge" class="badge">Running</span>
+        <span id="live-message" class="muted">Waiting for process events...</span>
+      </div>
+      <h3>Processes</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>PID</th><th>Parent</th><th>Name</th><th>State</th></tr></thead>
+          <tbody id="live-processes"></tbody>
+        </table>
+      </div>
+      <h3>Event log</h3>
+      <div id="event-log" class="event-log" role="log" aria-live="polite"></div>
+      <h3 class="section-title">Live memory use</h3>
+      <p id="live-memory-status" class="muted">Waiting for the first memory sample...</p>
+      <svg id="live-memory-chart" class="memory-chart" viewBox="0 0 700 230"
+           role="img" aria-label="Live total resident memory over time"></svg>
+    </section>
+
+    <section id="analysis-results" hidden></section>
+  </main>
+
+  <script>
+    "use strict";
+
+    const processRows = new Map();
+    const analyzeForm = document.getElementById("analyze-form");
+    const runButton = document.getElementById("run-button");
+    const liveCard = document.getElementById("live-card");
+    const resultContainer = document.getElementById("analysis-results");
+    const errorBox = document.getElementById("error-box");
+    const historyStatus = document.getElementById("history-status");
+    const historyTable = document.getElementById("history-table");
+    const historyDetail = document.getElementById("history-detail");
+    const memoryByPid = new Map();
+    const memoryTimeline = [];
+
+    const svgNamespace = "http://www.w3.org/2000/svg";
+
+    function makeTextElement(tag, text, className) {
+      const element = document.createElement(tag);
+      element.textContent = String(text);
+      if (className) element.className = className;
+      return element;
+    }
+
+    function showError(message) {
+      errorBox.textContent = message;
+      errorBox.hidden = false;
+    }
+
+    function setRunning(isRunning) {
+      runButton.disabled = isRunning;
+      runButton.textContent = isRunning ? "Analyzing..." : "Run & Analyze";
+    }
+
+    function addLogLine(message, timeMs) {
+      const line = makeTextElement("p", `${timeMs ?? 0} ms  ${message}`);
+      const log = document.getElementById("event-log");
+      log.appendChild(line);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    function createSvgElement(tag, attributes, text) {
+      const element = document.createElementNS(svgNamespace, tag);
+      for (const [name, value] of Object.entries(attributes)) {
+        element.setAttribute(name, String(value));
+      }
+      if (text !== undefined) element.textContent = text;
+      return element;
+    }
+
+    function renderMemoryChart(chart, samples, emptyMessage) {
+      chart.textContent = "";
+      if (samples.length === 0) {
+        chart.appendChild(createSvgElement("text",
+          { x: 54, y: 112, class: "memory-axis-label" },
+          emptyMessage || "Memory samples will appear as the program runs."));
+        return;
+      }
+      const left = 54;
+      const right = 680;
+      const top = 18;
+      const bottom = 184;
+      let maximumRss = 1;
+      for (let index = 0; index < samples.length; index++) {
+        maximumRss = Math.max(maximumRss, samples[index].rss_kb);
+      }
+      const maximumTime = Math.max(1,
+        samples[samples.length - 1].time_ms - samples[0].time_ms);
+      for (let gridIndex = 0; gridIndex <= 4; gridIndex++) {
+        const y = top + (bottom - top) * gridIndex / 4;
+        const valueMb = maximumRss * (4 - gridIndex) / 4 / 1024;
+        chart.appendChild(createSvgElement("line",
+          { x1: left, y1: y, x2: right, y2: y, class: "memory-grid" }));
+        chart.appendChild(createSvgElement("text",
+          { x: 4, y: y + 4, class: "memory-axis-label" },
+          `${valueMb.toFixed(1)} MiB`));
+      }
+      const points = [];
+      for (let index = 0; index < samples.length; index++) {
+        const sample = samples[index];
+        const x = left + (right - left) *
+          (sample.time_ms - samples[0].time_ms) / maximumTime;
+        const y = bottom - (bottom - top) * sample.rss_kb / maximumRss;
+        points.push(`${x},${y}`);
+      }
+      if (points.length === 1) {
+        const coordinates = points[0].split(",");
+        chart.appendChild(createSvgElement("circle",
+          { cx: coordinates[0], cy: coordinates[1], r: 5, fill: "var(--blue)" }));
+      } else {
+        chart.appendChild(createSvgElement("polyline",
+          { points: points.join(" "), class: "memory-line" }));
+      }
+      chart.appendChild(createSvgElement("text",
+        { x: left, y: 215, class: "memory-axis-label" },
+        `${samples[0].time_ms} ms`));
+      chart.appendChild(createSvgElement("text",
+        { x: right - 54, y: 215, class: "memory-axis-label" },
+        `${samples[samples.length - 1].time_ms} ms`));
+      chart.appendChild(createSvgElement("text",
+        { x: 290, y: 215, class: "memory-axis-label" }, "Elapsed time"));
+    }
+
+    function updateMemoryChart() {
+      renderMemoryChart(document.getElementById("live-memory-chart"), memoryTimeline);
+    }
+
+    function updateMemorySample(event) {
+      memoryByPid.set(event.pid, event);
+      let totalRssKb = 0;
+      for (const sample of memoryByPid.values()) totalRssKb += sample.rss_kb;
+      memoryTimeline.push({ time_ms: event.time_ms, rss_kb: totalRssKb });
+      document.getElementById("live-memory-status").textContent =
+        `Latest process ${event.pid}: ${(event.rss_kb / 1024).toFixed(2)} MiB RSS · ` +
+        `${(event.vsize_kb / 1024).toFixed(2)} MiB virtual · ${event.verdict}` +
+        (event.reason ? ` — ${event.reason}` : "");
+      updateMemoryChart();
+    }
+
+    function renderStateCell(state) {
+      const wrapper = document.createElement("span");
+      wrapper.className = "state";
+      const dot = makeTextElement("span", "", `dot ${state}`);
+      dot.setAttribute("aria-hidden", "true");
+      wrapper.appendChild(dot);
+      wrapper.appendChild(makeTextElement("span", state));
+      return wrapper;
+    }
+
+    function updateLiveProcess(process) {
+      let row = processRows.get(process.pid);
+      if (!row) {
+        row = document.createElement("tr");
+        processRows.set(process.pid, row);
+        document.getElementById("live-processes").appendChild(row);
+      }
+      row.textContent = "";
+      row.appendChild(makeTextElement("td", process.pid));
+      row.appendChild(makeTextElement("td", process.parent_pid));
+      row.appendChild(makeTextElement("td", process.name));
+      const stateCell = document.createElement("td");
+      stateCell.appendChild(renderStateCell(process.state || "READY"));
+      row.appendChild(stateCell);
+    }
+
+    function handleAnalyzerEvent(event) {
+      if (event.type === "process_added") {
+        updateLiveProcess({ ...event, state: "READY" });
+        addLogLine(`+ process ${event.pid} added (child of ${event.parent_pid})`, event.time_ms);
+      } else if (event.type === "state_changed") {
+        const previous = processRows.get(event.pid);
+        if (previous) {
+          const cells = previous.children;
+          const rowData = {
+            pid: event.pid,
+            parent_pid: cells[1].textContent,
+            name: cells[2].textContent,
+            state: event.to
+          };
+          updateLiveProcess(rowData);
+        }
+        addLogLine(`${event.pid} is now ${event.to}`, event.time_ms);
+      } else if (event.type === "process_exited") {
+        const previous = processRows.get(event.pid);
+        if (previous) {
+          updateLiveProcess({
+            pid: event.pid,
+            parent_pid: previous.children[1].textContent,
+            name: previous.children[2].textContent,
+            state: "TERMINATED"
+          });
+        }
+        memoryByPid.delete(event.pid);
+        addLogLine(`Process ${event.pid} exited`, event.time_ms);
+        if (memoryTimeline.length > 0) {
+          let totalRssKb = 0;
+          for (const sample of memoryByPid.values()) totalRssKb += sample.rss_kb;
+          memoryTimeline.push({ time_ms: event.time_ms, rss_kb: totalRssKb });
+          updateMemoryChart();
+        }
+      } else if (event.type === "slice") {
+        addLogLine(`PID ${event.pid} used ${event.cpu_ms} CPU ms in its slice`, event.end_ms);
+      } else if (event.type === "memory_sample") {
+        updateMemorySample(event);
+        addLogLine(`PID ${event.pid} RSS ${(event.rss_kb / 1024).toFixed(2)} MiB · ${event.verdict}`,
+          event.time_ms);
+      } else if (event.type === "memory_error") {
+        addLogLine(`Memory sample for PID ${event.pid} failed: ${event.error}`, event.time_ms);
+      } else if (event.type === "action") {
+        const message = event.action === "PAUSE"
+          ? `Paused ${event.pid}`
+          : "Terminated process group";
+        addLogLine(message, event.time_ms);
+      } else if (event.type === "error") {
+        throw new Error(event.error);
+      }
+    }
+
+    function addTile(container, label, value) {
+      const tile = makeTextElement("div", "", "tile");
+      tile.appendChild(makeTextElement("span", label, "muted"));
+      tile.appendChild(makeTextElement("strong", value));
+      container.appendChild(tile);
+    }
+
+    function makeTable(headers, rows) {
+      const wrapper = makeTextElement("div", "", "table-wrap");
+      const table = document.createElement("table");
+      const head = document.createElement("thead");
+      const headerRow = document.createElement("tr");
+      for (let index = 0; index < headers.length; index++) {
+        headerRow.appendChild(makeTextElement("th", headers[index]));
+      }
+      head.appendChild(headerRow);
+      table.appendChild(head);
+      const body = document.createElement("tbody");
+      for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+        const row = document.createElement("tr");
+        for (let cellIndex = 0; cellIndex < rows[rowIndex].length; cellIndex++) {
+          const cell = document.createElement("td");
+          const value = rows[rowIndex][cellIndex];
+          if (value instanceof Node) cell.appendChild(value);
+          else cell.textContent = value === null || value === undefined ? "—" : String(value);
+          row.appendChild(cell);
+        }
+        body.appendChild(row);
+      }
+      table.appendChild(body);
+      wrapper.appendChild(table);
+      return wrapper;
+    }
+
+    function formatHistoryDate(value) {
+      if (!value) return "—";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+    }
+
+    function renderHistoryRows(history) {
+      historyTable.textContent = "";
+      historyDetail.hidden = true;
+      if (history.length === 0) {
+        historyStatus.textContent = "No saved analyses yet.";
+        return;
+      }
+      historyStatus.textContent = `${history.length} saved analysis run(s).`;
+      const rows = [];
+      for (let index = 0; index < history.length; index += 1) {
+        const run = history[index];
+        const viewButton = makeTextElement("button", "View", "secondary");
+        viewButton.type = "button";
+        viewButton.addEventListener("click", function showHistoryRun() {
+          openHistoryDetail(run.session_id);
+        });
+        rows.push([
+          run.session_id,
+          run.program_name,
+          formatHistoryDate(run.started_at),
+          run.threat_level,
+          run.risk_score,
+          run.process_count,
+          run.memory_analysis && run.memory_analysis.verdict
+            ? run.memory_analysis.verdict
+            : "—",
+          run.memory_sample_count,
+          viewButton
+        ]);
+      }
+      historyTable.appendChild(makeTable(
+        ["Run", "Program", "Started", "Threat", "Risk", "Processes",
+          "Memory", "Samples", "Details"],
+        rows
+      ));
+    }
+
+    async function loadHistory() {
+      historyStatus.textContent = "Loading saved analyses...";
+      try {
+        const response = await fetch("/api/history");
+        const body = await response.json();
+        if (!response.ok) {
+          throw new Error(body.error || `History request failed with status ${response.status}.`);
+        }
+        if (!Array.isArray(body.history)) throw new Error("History response has an invalid format.");
+        renderHistoryRows(body.history);
+      } catch (error) {
+        historyTable.textContent = "";
+        historyStatus.textContent = `Could not load analysis history: ${error.message}`;
+      }
+    }
+
+    function appendHistoryJson(container, title, value) {
+      if (!value || value.length === 0) return;
+      const details = document.createElement("details");
+      details.appendChild(makeTextElement("summary", title));
+      const content = makeTextElement("pre", JSON.stringify(value, null, 2), "history-json");
+      details.appendChild(content);
+      container.appendChild(details);
+    }
+
+    function renderHistoryDetail(detail) {
+      historyDetail.textContent = "";
+      historyDetail.hidden = false;
+      const heading = makeTextElement("h2", `Saved run: ${detail.application.name}`,
+        "history-detail-heading");
+      heading.id = "history-detail-title";
+      const closeButton = makeTextElement("button", "Close details", "secondary");
+      closeButton.type = "button";
+      closeButton.addEventListener("click", function closeHistoryDetail() {
+        historyDetail.hidden = true;
+      });
+      historyDetail.appendChild(heading);
+      historyDetail.appendChild(closeButton);
+
+      const session = detail.session;
+      const summary = detail.summary || {};
+      const memory = summary.memory_analysis || {};
+      const memorySamples = detail.memory_samples || [];
+      const processes = detail.processes || [];
+      const tiles = makeTextElement("div", "", "tile-grid");
+      addTile(tiles, "Started", formatHistoryDate(session.started_at));
+      addTile(tiles, "Status", session.status);
+      addTile(tiles, "Threat", session.threat_level);
+      addTile(tiles, "Risk score", session.risk_score);
+      addTile(tiles, "Duration", `${summary.duration_ms ?? 0} ms`);
+      addTile(tiles, "Peak process RSS",
+        `${(Number(memory.peak_rss_kb || 0) / 1024).toFixed(2)} MiB`);
+      historyDetail.appendChild(tiles);
+      historyDetail.appendChild(makeTextElement("p",
+        `File size: ${detail.application.file_size ?? 0} bytes · ` +
+        `SHA-256: ${detail.application.file_hash || "—"}`, "muted"));
+
+      const graphSamples = [];
+      for (let index = 0; index < memorySamples.length; index += 1) {
+        const sample = memorySamples[index];
+        graphSamples.push({
+          time_ms: Number(sample.elapsed_ms),
+          rss_kb: Number(sample.rss_kb)
+        });
+      }
+      const graph = createSvgElement("svg", {
+        viewBox: "0 0 700 230",
+        class: "memory-chart",
+        role: "img",
+        "aria-label": "Saved run resident memory over time"
+      });
+      renderMemoryChart(graph, graphSamples, "No memory samples were saved for this run.");
+      historyDetail.appendChild(makeTextElement("h3", "Memory history"));
+      historyDetail.appendChild(graph);
+
+      const processRows = [];
+      for (let index = 0; index < processes.length; index += 1) {
+        const process = processes[index];
+        const savedProcess = (summary.processes || []).find(function matchSummary(item) {
+          return item.pid === process.pid;
+        });
+        processRows.push([
+          process.pid,
+          process.parent_pid,
+          process.process_name,
+          process.status,
+          savedProcess ? savedProcess.exit_status : "—",
+          process.cpu_usage,
+          process.memory_usage
+            ? `${(Number(process.memory_usage) / 1024 / 1024).toFixed(2)} MiB`
+            : "—"
+        ]);
+      }
+      historyDetail.appendChild(makeTextElement("h3", "Processes"));
+      historyDetail.appendChild(makeTable(
+        ["PID", "Parent", "Name", "Status", "Exit", "CPU ms", "Peak RSS"],
+        processRows
+      ));
+
+      const slices = summary.slices || [];
+      historyDetail.appendChild(makeTextElement("h3", "CPU scheduling"));
+      historyDetail.appendChild(renderSlices(slices));
+      appendHistoryJson(historyDetail, "Findings", summary.findings || []);
+      appendHistoryJson(historyDetail, "Alerts", detail.alerts);
+      appendHistoryJson(historyDetail, "Actions", detail.actions);
+      appendHistoryJson(historyDetail, "Threat scores", detail.threat_scores);
+      appendHistoryJson(historyDetail, "Execution environments", detail.execution_environments);
+      appendHistoryJson(historyDetail, "System information", detail.system_info);
+      appendHistoryJson(historyDetail, "File events", detail.file_events);
+      appendHistoryJson(historyDetail, "Network events", detail.network_events);
+      appendHistoryJson(historyDetail, "Syscall events", detail.syscall_events);
+      historyDetail.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    async function openHistoryDetail(sessionId) {
+      historyDetail.hidden = false;
+      historyDetail.textContent = "Loading saved analysis...";
+      try {
+        const response = await fetch(`/api/history/${encodeURIComponent(sessionId)}`);
+        const body = await response.json();
+        if (!response.ok) {
+          throw new Error(body.error || `History request failed with status ${response.status}.`);
+        }
+        renderHistoryDetail(body);
+      } catch (error) {
+        historyDetail.textContent = `Could not load this analysis: ${error.message}`;
+      }
+    }
+
+    function renderFinalProcesses(processes) {
+      const rows = [];
+      for (let index = 0; index < processes.length; index++) {
+        const process = processes[index];
+        rows.push([
+          process.pid,
+          process.parent_pid,
+          process.final_state || process.status,
+          process.exit_status,
+          process.cpu_ms ?? process.cpu_usage
+        ]);
+      }
+      return makeTable(["PID", "Parent", "State", "Exit", "CPU ms"], rows);
+    }
+
+    function renderSlices(slices) {
+      let largest = 1;
+      for (let index = 0; index < slices.length; index++) {
+        if (slices[index].cpu_ms > largest) largest = slices[index].cpu_ms;
+      }
+      const rows = [];
+      for (let index = 0; index < slices.length; index++) {
+        const slice = slices[index];
+        const track = makeTextElement("div", "", "slice-bar-track");
+        const bar = makeTextElement("div", "", "slice-bar");
+        bar.style.width = `${Math.max(2, 100 * slice.cpu_ms / largest)}%`;
+        track.appendChild(bar);
+        rows.push([index + 1, slice.pid, slice.start_ms, slice.end_ms, slice.cpu_ms, track]);
+      }
+      return makeTable(["Slice", "PID", "Start ms", "End ms", "CPU ms", "CPU"], rows);
+    }
+
+    function renderMemoryAnalysis(memory) {
+      const card = makeTextElement("section", "", "card");
+      card.appendChild(makeTextElement("h2", "Memory analysis"));
+      const tiles = makeTextElement("div", "", "tile-grid");
+      addTile(tiles, "Peak process RSS", `${(Number(memory.peak_rss_kb || 0) / 1024).toFixed(2)} MiB`);
+      addTile(tiles, "Samples", memory.sample_count ?? 0);
+      addTile(tiles, "Memory verdict", memory.verdict || "UNKNOWN");
+      card.appendChild(tiles);
+      card.appendChild(makeTextElement("p", memory.reason || "No memory samples were collected."));
+      const chart = createSvgElement("svg", {
+        viewBox: "0 0 700 230",
+        class: "memory-chart",
+        role: "img",
+        "aria-label": "Total resident memory over time"
+      });
+      renderMemoryChart(chart, memoryTimeline, "No memory samples were collected for this run.");
+      card.appendChild(chart);
+      card.appendChild(makeTextElement("p",
+        "The graph estimates process-tree RSS by summing each process's latest sample.",
+        "muted"));
+      return card;
+    }
+
+    function metricText(value) {
+      return Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)} ms` : "—";
+    }
+
+    function renderAnalysis(result) {
+      document.getElementById("status-badge").className = "badge finished";
+      document.getElementById("status-badge").textContent = "Finished";
+      document.getElementById("live-message").textContent =
+        "Analysis complete. Process, event, and memory details are retained here.";
+      resultContainer.hidden = false;
+      resultContainer.textContent = "";
+      const findings = result.findings || [];
+      const banner = makeTextElement("section", "", `card result-banner ${result.threat_level}`);
+      banner.appendChild(makeTextElement("h2", result.verdict || "Analysis complete"));
+      banner.appendChild(makeTextElement("p",
+        `Risk score: ${result.risk_score ?? 0} · Threat level: ${result.threat_level || "SAFE"}`,
+        "risk-score"));
+      resultContainer.appendChild(banner);
+
+      const summary = result.summary || result;
+      const tiles = makeTextElement("section", "", "card tile-grid");
+      addTile(tiles, "Total time", `${summary.duration_ms ?? 0} ms`);
+      addTile(tiles, "CPU time", `${summary.total_cpu_ms ?? 0} ms`);
+      addTile(tiles, "CPU %", `${Number(summary.cpu_percent || 0).toFixed(2)}%`);
+      addTile(tiles, "Processes", summary.process_count ?? (result.processes || []).length);
+      resultContainer.appendChild(tiles);
+
+      resultContainer.appendChild(renderMemoryAnalysis(result.memory_analysis || {}));
+
+      const processCard = makeTextElement("section", "", "card");
+      processCard.appendChild(makeTextElement("h2", "Process management"));
+      processCard.appendChild(renderFinalProcesses(result.processes || []));
+      resultContainer.appendChild(processCard);
+
+      const schedulerCard = makeTextElement("section", "", "card");
+      schedulerCard.appendChild(makeTextElement("h2", "CPU scheduling"));
+      schedulerCard.appendChild(renderSlices(result.slices || []));
+      const metrics = result.scheduler_metrics || {};
+      const averages = metrics.averages || {};
+      schedulerCard.appendChild(makeTextElement("p",
+        `Average waiting: ${metricText(averages.waiting_ms)} · ` +
+        `turnaround: ${metricText(averages.turnaround_ms)} · ` +
+        `response: ${metricText(averages.response_ms)} · ` +
+        `context switches: ${metrics.context_switches ?? 0}`));
+      resultContainer.appendChild(schedulerCard);
+
+      if (result.db_error) {
+        resultContainer.appendChild(makeTextElement("p",
+          `Not saved to database: ${result.db_error}`, "db-note"));
+      }
+    }
+
+    function resetRunView() {
+      errorBox.hidden = true;
+      errorBox.textContent = "";
+      resultContainer.hidden = true;
+      resultContainer.textContent = "";
+      liveCard.hidden = false;
+      processRows.clear();
+      document.getElementById("live-processes").textContent = "";
+      document.getElementById("event-log").textContent = "";
+      memoryByPid.clear();
+      memoryTimeline.length = 0;
+      document.getElementById("live-memory-status").textContent =
+        "Waiting for the first memory sample...";
+      updateMemoryChart();
+      const badge = document.getElementById("status-badge");
+      badge.className = "badge";
+      badge.textContent = "Running";
+      document.getElementById("live-message").textContent = "Analyzing the real process tree...";
+    }
+
+    async function readAnalysisStream(response) {
+      if (!response.ok) {
+        const errorBody = await response.json();
+        throw new Error(errorBody.error || `Request failed with status ${response.status}.`);
+      }
+      if (!response.body) throw new Error("This browser does not support streamed responses.");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let pending = "";
+      let finalResult = null;
+      while (true) {
+        const chunk = await reader.read();
+        pending += decoder.decode(chunk.value || new Uint8Array(), { stream: !chunk.done });
+        const lines = pending.split(/\r?\n/);
+        pending = lines.pop();
+        for (let index = 0; index < lines.length; index++) {
+          if (!lines[index].trim()) continue;
+          const record = JSON.parse(lines[index]);
+          if (record.type === "result") finalResult = record;
+          else handleAnalyzerEvent(record);
+        }
+        if (chunk.done) break;
+      }
+      if (pending.trim()) {
+        const record = JSON.parse(pending);
+        if (record.type === "result") finalResult = record;
+        else handleAnalyzerEvent(record);
+      }
+      if (!finalResult) throw new Error("Analysis stream ended without a final result.");
+      return finalResult;
+    }
+
+    async function submitAnalysis(event) {
+      event.preventDefault();
+      if (!document.getElementById("program-file").files.length) {
+        showError("Choose a Linux executable or script first.");
+        return;
+      }
+      resetRunView();
+      setRunning(true);
+      try {
+        const response = await fetch("/api/analyze", {
+          method: "POST",
+          body: new FormData(analyzeForm)
+        });
+        const result = await readAnalysisStream(response);
+        renderAnalysis(result);
+        await loadHistory();
+      } catch (error) {
+        showError(error.message);
+        liveCard.hidden = true;
+      } finally {
+        setRunning(false);
+      }
+    }
+
+    analyzeForm.addEventListener("submit", submitAnalysis);
+    loadHistory();
+  </script>
+</body>
+</html>
